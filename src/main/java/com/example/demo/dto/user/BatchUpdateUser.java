@@ -12,7 +12,7 @@ public class BatchUpdateUser {
     @NotBlank(message = "last name is required")
     private String lastName;
     @NotBlank(message = "username is required")
-    private String userame;
+    private String username;
     @NotBlank(message = "email is required")
     @Email(message = "email must be valid")
     private String email;
@@ -43,12 +43,12 @@ public class BatchUpdateUser {
         this.lastName = lastName;
     }
 
-    public String getUserame() {
-        return userame;
+    public String getUsername() {
+        return username;
     }
 
-    public void setUserame(String userame) {
-        this.userame = userame;
+    public void setUsername(String username) {
+        this.username = username;
     }
 
     public String getEmail() {

@@ -63,10 +63,15 @@ public class UserServiceImpl implements UserService {
     @Override
     public User update(Long id, User user) {
         try{
-            User UpdateUser = userRepository.findById(id).orElseThrow();
-            UpdateUser.setFirstName(user.getFirstName());
-            UpdateUser.setEmail(user.getEmail());
-            return userRepository.save(UpdateUser);
+            User existing = userRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException("User with the id:" + id + " was Not Found"));
+            if (user.getFirstName() != null) existing.setFirstName(user.getFirstName());
+            if (user.getLastName() != null) existing.setLastName(user.getLastName());
+            if (user.getUsername() != null) existing.setUsername(user.getUsername());
+            if (user.getEmail() != null) existing.setEmail(user.getEmail());
+            if (user.getRole() != null) existing.setRole(user.getRole());
+            return userRepository.save(existing);
+        } catch (ResourceNotFoundException e) {
+            throw e;
         } catch (Exception e) {
             throw new ServiceException("failed to update user.", e);
         }
@@ -75,13 +80,18 @@ public class UserServiceImpl implements UserService {
     @Override
     public List<User> update(List<User> users) {
         try{
-            List<User> UpdateUsers = users.stream().map(user -> {
-                User UpdateUser = userRepository.findById(user.getId()).orElseThrow(() -> new ResourceNotFoundException("User with the id:" + user.getId() + " was Not Found"));
-                UpdateUser.setFirstName(user.getFirstName());
-                UpdateUser.setEmail(user.getEmail());
-                return UpdateUser;
+            List<User> updatedUsers = users.stream().map(user -> {
+                User existing = userRepository.findById(user.getId()).orElseThrow(() -> new ResourceNotFoundException("User with the id:" + user.getId() + " was Not Found"));
+                if (user.getFirstName() != null) existing.setFirstName(user.getFirstName());
+                if (user.getLastName() != null) existing.setLastName(user.getLastName());
+                if (user.getUsername() != null) existing.setUsername(user.getUsername());
+                if (user.getEmail() != null) existing.setEmail(user.getEmail());
+                if (user.getRole() != null) existing.setRole(user.getRole());
+                return existing;
             }).toList();
-            return userRepository.saveAll(UpdateUsers);
+            return userRepository.saveAll(updatedUsers);
+        } catch (ResourceNotFoundException e) {
+            throw e;
         } catch (Exception e) {
             throw new ServiceException("failed to update users.", e);
         }

@@ -104,7 +104,7 @@ public class UserController {
         User user = new User();
         user.setFirstName(createUser.getFirstName());
         user.setLastName(createUser.getLastName());
-        user.setUsername(createUser.getUserame());
+        user.setUsername(createUser.getUsername());
         user.setEmail(createUser.getEmail());
         user.setPassword(passwordEncoder.encode(createUser.getPassword()));
         user.setRole(createUser.getRole());
@@ -124,7 +124,7 @@ public class UserController {
             User createUser = new User();
             createUser.setFirstName(user.getFirstName());
             createUser.setLastName(user.getLastName());
-            createUser.setUsername(user.getUserame());
+            createUser.setUsername(user.getUsername());
             createUser.setEmail(user.getEmail());
             createUser.setPassword(passwordEncoder.encode(user.getPassword()));
             createUser.setRole(user.getRole());
@@ -145,7 +145,7 @@ public class UserController {
         User updateUser = new User();
         updateUser.setFirstName(user.getFirstName());
         updateUser.setLastName(user.getLastName());
-        updateUser.setUsername(user.getUserame());
+        updateUser.setUsername(user.getUsername());
         updateUser.setEmail(user.getEmail());
         updateUser.setRole(user.getRole());
         User updatedUser = userService.update(id, updateUser);
@@ -165,7 +165,7 @@ public class UserController {
             updateUser.setId(user.getId());
             updateUser.setFirstName(user.getFirstName());
             updateUser.setLastName(user.getLastName());
-            updateUser.setUsername(user.getUserame());
+            updateUser.setUsername(user.getUsername());
             updateUser.setEmail(user.getEmail());
             updateUser.setRole(user.getRole());
             return updateUser;
@@ -185,7 +185,7 @@ public class UserController {
         User patchUser = new User();
         if (user.getFirstName() != null) patchUser.setFirstName(user.getFirstName());
         if (user.getLastName() != null) patchUser.setLastName(user.getLastName());
-        if (user.getUserame() != null) patchUser.setUsername(user.getUserame());
+        if (user.getUsername() != null) patchUser.setUsername(user.getUsername());
         if (user.getEmail() != null) patchUser.setEmail(user.getEmail());
         if (user.getRole() != null) patchUser.setRole(user.getRole());
         User patchedUser = userService.update(id, patchUser);
@@ -205,7 +205,7 @@ public class UserController {
             if (user.getId() != null) patchUser.setId(user.getId());
             if (user.getFirstName() != null) patchUser.setFirstName(user.getFirstName());
             if (user.getLastName() != null) patchUser.setLastName(user.getLastName());
-            if (user.getUserame() != null) patchUser.setUsername(user.getUserame());
+            if (user.getUsername() != null) patchUser.setUsername(user.getUsername());
             if (user.getEmail() != null) patchUser.setEmail(user.getEmail());
             if (user.getRole() != null) patchUser.setRole(user.getRole());
             return patchUser;

@@ -59,7 +59,7 @@ class AuthController {
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
         User user = userRepository.findByEmailOrUsername(request.getIdentifier(), request.getIdentifier()).orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(user.getEmail(), request.getPassword()));
+        authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(request.getIdentifier(), request.getPassword()));
 
         String token = jwtService.generateToken(user);
         return ResponseEntity.ok(new AuthResponse(token));
