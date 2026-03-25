@@ -3,7 +3,9 @@ package com.example.demo.controller;
 import com.example.demo.dto.user.BatchUpdateUser;
 import com.example.demo.dto.user.CreateUser;
 import com.example.demo.dto.user.UpdateUser;
+import com.example.demo.dto.user.UserResponse;
 import com.example.demo.entity.User;
+import com.example.demo.mapper.UserMapper;
 import com.example.demo.service.UserService;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -32,21 +34,23 @@ public class UserController {
 
     private final UserService userService;
     private final PasswordEncoder passwordEncoder;
+    private final UserMapper userMapper;
 
-    public UserController(UserService userService, PasswordEncoder passwordEncoder) {
+    public UserController(UserService userService, PasswordEncoder passwordEncoder, UserMapper userMapper) {
         this.userService = userService;
         this.passwordEncoder = passwordEncoder;
+        this.userMapper = userMapper;
     }
 
     @GetMapping("/users")
     @Operation(summary = "get user list", description = "get user list description")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Success", content = @Content(array = @ArraySchema(schema = @Schema(implementation = User.class)))),
+            @ApiResponse(responseCode = "200", description = "Success", content = @Content(array = @ArraySchema(schema = @Schema(implementation = UserResponse.class)))),
             @ApiResponse(responseCode = "503", description = "Service unavailable", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
     })
-    public ResponseEntity<List<User>> getUserList(){
+    public ResponseEntity<List<UserResponse>> getUserList(){
         List<User> userList = userService.get();
-        return ResponseEntity.ok(userList);
+        return ResponseEntity.ok(userMapper.toResponseList(userList));
     }
 
     @GetMapping("/users/count")
@@ -63,23 +67,23 @@ public class UserController {
     @GetMapping("/users/{id}")
     @Operation(summary = "get user by id", description = "get user by id description")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = User.class))),
+            @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = UserResponse.class))),
             @ApiResponse(responseCode = "503", description = "Service unavailable", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
     })
-    public ResponseEntity<User> getUserById(@PathVariable Long id){
+    public ResponseEntity<UserResponse> getUserById(@PathVariable Long id){
         User user = userService.get(id);
-        return ResponseEntity.ok(user);
+        return ResponseEntity.ok(userMapper.toResponse(user));
     }
 
     @PostMapping("/users/search")
     @Operation(summary = "get user list by ids", description = "get user list by ids description")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Success", content = @Content(array = @ArraySchema(schema = @Schema(implementation = User.class)))),
+            @ApiResponse(responseCode = "200", description = "Success", content = @Content(array = @ArraySchema(schema = @Schema(implementation = UserResponse.class)))),
             @ApiResponse(responseCode = "503", description = "Service unavailable", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
     })
-    public ResponseEntity<List<User>> getUserListByIds(@RequestBody List<Long> ids){
+    public ResponseEntity<List<UserResponse>> getUserListByIds(@RequestBody List<Long> ids){
         List<User> userList = userService.get(ids);
-        return ResponseEntity.ok(userList);
+        return ResponseEntity.ok(userMapper.toResponseList(userList));
     }
 
     @GetMapping("/users/{id}/exists")
@@ -96,122 +100,80 @@ public class UserController {
     @PostMapping("/users")
     @Operation(summary = "create a user", description = "create a user description")
     @ApiResponses({
-            @ApiResponse(responseCode = "201", description = "Success", content = @Content(schema = @Schema(implementation = User.class))),
+            @ApiResponse(responseCode = "201", description = "Success", content = @Content(schema = @Schema(implementation = UserResponse.class))),
             @ApiResponse(responseCode = "400", description = "Validation failed", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
             @ApiResponse(responseCode = "503", description = "Service unavailable", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
     })
-    public ResponseEntity<User> createUser(@Valid @RequestBody CreateUser createUser){
-        User user = new User();
-        user.setFirstName(createUser.getFirstName());
-        user.setLastName(createUser.getLastName());
-        user.setUsername(createUser.getUsername());
-        user.setEmail(createUser.getEmail());
+    public ResponseEntity<UserResponse> createUser(@Valid @RequestBody CreateUser createUser){
+        User user = userMapper.toEntity(createUser);
         user.setPassword(passwordEncoder.encode(createUser.getPassword()));
-        user.setRole(createUser.getRole());
         User createdUser = userService.create(user);
-        return ResponseEntity.status(HttpStatus.CREATED).body(createdUser);
+        return ResponseEntity.status(HttpStatus.CREATED).body(userMapper.toResponse(createdUser));
     }
 
     @PostMapping("/users/batch")
     @Operation(summary = "create users", description = "create users description")
     @ApiResponses({
-            @ApiResponse(responseCode = "201", description = "Success", content = @Content(array = @ArraySchema(schema = @Schema(implementation = User.class)))),
+            @ApiResponse(responseCode = "201", description = "Success", content = @Content(array = @ArraySchema(schema = @Schema(implementation = UserResponse.class)))),
             @ApiResponse(responseCode = "400", description = "Validation failed", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
             @ApiResponse(responseCode = "503", description = "Service unavailable", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
     })
-    public ResponseEntity<List<User>> createUsers(@Valid @RequestBody List<@Valid CreateUser> users){
-        List<User> createUsers = users.stream().map(user -> {
-            User createUser = new User();
-            createUser.setFirstName(user.getFirstName());
-            createUser.setLastName(user.getLastName());
-            createUser.setUsername(user.getUsername());
-            createUser.setEmail(user.getEmail());
-            createUser.setPassword(passwordEncoder.encode(user.getPassword()));
-            createUser.setRole(user.getRole());
-            return createUser;
+    public ResponseEntity<List<UserResponse>> createUsers(@Valid @RequestBody List<@Valid CreateUser> users){
+        List<User> createUsers = users.stream().map(dto -> {
+            User user = userMapper.toEntity(dto);
+            user.setPassword(passwordEncoder.encode(dto.getPassword()));
+            return user;
         }).toList();
-        List<User> createdUser = userService.create(createUsers);
-        return ResponseEntity.status(HttpStatus.CREATED).body(createdUser);
+        List<User> createdUsers = userService.create(createUsers);
+        return ResponseEntity.status(HttpStatus.CREATED).body(userMapper.toResponseList(createdUsers));
     }
 
     @PutMapping("/users/{id}")
     @Operation(summary = "update a user", description = "update a user description")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = User.class))),
+            @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = UserResponse.class))),
             @ApiResponse(responseCode = "400", description = "Validation failed", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
             @ApiResponse(responseCode = "503", description = "Service unavailable", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
     })
-    public ResponseEntity<User> updateUser(@PathVariable Long id, @Valid @RequestBody UpdateUser user){
-        User updateUser = new User();
-        updateUser.setFirstName(user.getFirstName());
-        updateUser.setLastName(user.getLastName());
-        updateUser.setUsername(user.getUsername());
-        updateUser.setEmail(user.getEmail());
-        updateUser.setRole(user.getRole());
-        User updatedUser = userService.update(id, updateUser);
-        return ResponseEntity.ok(updatedUser);
+    public ResponseEntity<UserResponse> updateUser(@PathVariable Long id, @Valid @RequestBody UpdateUser user){
+        User updatedUser = userService.update(id, user);
+        return ResponseEntity.ok(userMapper.toResponse(updatedUser));
     }
 
     @PutMapping("/users/batch")
     @Operation(summary = "update users", description = "update users description")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Success", content = @Content(array = @ArraySchema(schema = @Schema(implementation = User.class)))),
+            @ApiResponse(responseCode = "200", description = "Success", content = @Content(array = @ArraySchema(schema = @Schema(implementation = UserResponse.class)))),
             @ApiResponse(responseCode = "400", description = "Validation failed", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
             @ApiResponse(responseCode = "503", description = "Service unavailable", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
     })
-    public ResponseEntity<List<User>> updateUsers(@Valid @RequestBody List<@Valid BatchUpdateUser> users){
-        List<User> updateUsers = users.stream().map(user -> {
-            User updateUser = new User();
-            updateUser.setId(user.getId());
-            updateUser.setFirstName(user.getFirstName());
-            updateUser.setLastName(user.getLastName());
-            updateUser.setUsername(user.getUsername());
-            updateUser.setEmail(user.getEmail());
-            updateUser.setRole(user.getRole());
-            return updateUser;
-        }).toList();
-        List<User> updatedUsers = userService.update(updateUsers);
-        return ResponseEntity.ok(updatedUsers);
+    public ResponseEntity<List<UserResponse>> updateUsers(@Valid @RequestBody List<@Valid BatchUpdateUser> users){
+        List<User> updatedUsers = userService.update(users);
+        return ResponseEntity.ok(userMapper.toResponseList(updatedUsers));
     }
 
     @PatchMapping("/users/{id}")
     @Operation(summary = "partial update a user", description = "partial update a user description")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = User.class))),
+            @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = UserResponse.class))),
             @ApiResponse(responseCode = "404", description = "Not found", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
             @ApiResponse(responseCode = "503", description = "Service unavailable", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
     })
-    public ResponseEntity<User> patchUser(@PathVariable Long id, @RequestBody UpdateUser user) {
-        User patchUser = new User();
-        if (user.getFirstName() != null) patchUser.setFirstName(user.getFirstName());
-        if (user.getLastName() != null) patchUser.setLastName(user.getLastName());
-        if (user.getUsername() != null) patchUser.setUsername(user.getUsername());
-        if (user.getEmail() != null) patchUser.setEmail(user.getEmail());
-        if (user.getRole() != null) patchUser.setRole(user.getRole());
-        User patchedUser = userService.update(id, patchUser);
-        return ResponseEntity.ok(patchedUser);
+    public ResponseEntity<UserResponse> patchUser(@PathVariable Long id, @RequestBody UpdateUser user) {
+        User patchedUser = userService.patch(id, user);
+        return ResponseEntity.ok(userMapper.toResponse(patchedUser));
     }
 
     @PatchMapping("/users/batch")
     @Operation(summary = "partial update a user", description = "partial update a user description")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = User.class))),
+            @ApiResponse(responseCode = "200", description = "Success", content = @Content(schema = @Schema(implementation = UserResponse.class))),
             @ApiResponse(responseCode = "404", description = "Not found", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
             @ApiResponse(responseCode = "503", description = "Service unavailable", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
     })
-    public ResponseEntity<List<User>> patchUser(@RequestBody List<BatchUpdateUser> users) {
-        List<User> patchUsers = users.stream().map(user -> {
-            User patchUser = new User();
-            if (user.getId() != null) patchUser.setId(user.getId());
-            if (user.getFirstName() != null) patchUser.setFirstName(user.getFirstName());
-            if (user.getLastName() != null) patchUser.setLastName(user.getLastName());
-            if (user.getUsername() != null) patchUser.setUsername(user.getUsername());
-            if (user.getEmail() != null) patchUser.setEmail(user.getEmail());
-            if (user.getRole() != null) patchUser.setRole(user.getRole());
-            return patchUser;
-        }).toList();
-        List<User> patchedUser = userService.update(patchUsers);
-        return ResponseEntity.ok(patchedUser);
+    public ResponseEntity<List<UserResponse>> patchUser(@RequestBody List<BatchUpdateUser> users) {
+        List<User> patchedUsers = userService.patch(users);
+        return ResponseEntity.ok(userMapper.toResponseList(patchedUsers));
     }
 
     @DeleteMapping("/users/{id}")

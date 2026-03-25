@@ -1,8 +1,11 @@
 package com.example.demo.service;
 
+import com.example.demo.dto.user.BatchUpdateUser;
+import com.example.demo.dto.user.UpdateUser;
 import com.example.demo.entity.User;
 import com.example.demo.exception.ResourceNotFoundException;
 import com.example.demo.exception.ServiceException;
+import com.example.demo.mapper.UserMapper;
 import com.example.demo.repository.UserRepository;
 import org.springframework.stereotype.Service;
 
@@ -12,9 +15,11 @@ import java.util.List;
 public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
+    private final UserMapper userMapper;
 
-    public UserServiceImpl(UserRepository userRepository){
+    public UserServiceImpl(UserRepository userRepository, UserMapper userMapper){
         this.userRepository = userRepository;
+        this.userMapper = userMapper;
     }
 
     @Override
@@ -61,14 +66,10 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public User update(Long id, User user) {
+    public User update(Long id, UpdateUser dto) {
         try{
             User existing = userRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException("User with the id:" + id + " was Not Found"));
-            if (user.getFirstName() != null) existing.setFirstName(user.getFirstName());
-            if (user.getLastName() != null) existing.setLastName(user.getLastName());
-            if (user.getUsername() != null) existing.setUsername(user.getUsername());
-            if (user.getEmail() != null) existing.setEmail(user.getEmail());
-            if (user.getRole() != null) existing.setRole(user.getRole());
+            userMapper.updateEntity(dto, existing);
             return userRepository.save(existing);
         } catch (ResourceNotFoundException e) {
             throw e;
@@ -78,15 +79,40 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public List<User> update(List<User> users) {
+    public User patch(Long id, UpdateUser dto) {
         try{
-            List<User> updatedUsers = users.stream().map(user -> {
-                User existing = userRepository.findById(user.getId()).orElseThrow(() -> new ResourceNotFoundException("User with the id:" + user.getId() + " was Not Found"));
-                if (user.getFirstName() != null) existing.setFirstName(user.getFirstName());
-                if (user.getLastName() != null) existing.setLastName(user.getLastName());
-                if (user.getUsername() != null) existing.setUsername(user.getUsername());
-                if (user.getEmail() != null) existing.setEmail(user.getEmail());
-                if (user.getRole() != null) existing.setRole(user.getRole());
+            User existing = userRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException("User with the id:" + id + " was Not Found"));
+            userMapper.patchEntity(dto, existing);
+            return userRepository.save(existing);
+        } catch (ResourceNotFoundException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ServiceException("failed to update user.", e);
+        }
+    }
+
+    @Override
+    public List<User> update(List<BatchUpdateUser> dtos) {
+        try{
+            List<User> updatedUsers = dtos.stream().map(dto -> {
+                User existing = userRepository.findById(dto.getId()).orElseThrow(() -> new ResourceNotFoundException("User with the id:" + dto.getId() + " was Not Found"));
+                userMapper.updateEntity(dto, existing);
+                return existing;
+            }).toList();
+            return userRepository.saveAll(updatedUsers);
+        } catch (ResourceNotFoundException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ServiceException("failed to update users.", e);
+        }
+    }
+
+    @Override
+    public List<User> patch(List<BatchUpdateUser> dtos) {
+        try{
+            List<User> updatedUsers = dtos.stream().map(dto -> {
+                User existing = userRepository.findById(dto.getId()).orElseThrow(() -> new ResourceNotFoundException("User with the id:" + dto/\.getId() + " was Not Found"));
+                userMapper.patchEntity(dto, existing);
                 return existing;
             }).toList();
             return userRepository.saveAll(updatedUsers);
