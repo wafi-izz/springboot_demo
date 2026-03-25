@@ -35,12 +35,12 @@
 
 **Why:** Manual `user.setFirstName(dto.getFirstName())` in controllers doesn't scale, is error-prone (you already had bugs from this), and clutters controller logic. MapStruct generates compile-time mapping code — zero reflection, zero runtime cost.
 
-- [ ] Add MapStruct dependency + annotation processor to `pom.xml`
-- [ ] Create `UserMapper` interface with `@Mapper(componentModel = "spring")`
-- [ ] Map `CreateUser → User`, `UpdateUser → User`, `User → UserResponse` (new DTO — stop returning entities)
-- [ ] Use `@MappingTarget` for update operations (map onto an existing entity)
-- [ ] Use `@BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)` for PATCH support
-- [ ] Create a `UserResponse` DTO — **never return JPA entities directly from controllers** (even with `@JsonIgnore`, it's fragile and leaks your data model)
+- [x] Add MapStruct dependency + annotation processor to `pom.xml`
+- [x] Create `UserMapper` interface with `@Mapper(componentModel = "spring")`
+- [x] Map `CreateUser → User`, `UpdateUser → User`, `User → UserResponse` (new DTO — stop returning entities)
+- [x] Use `@MappingTarget` for update operations (map onto an existing entity)
+- [x] Use `@BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)` for PATCH support
+- [x] Create a `UserResponse` DTO — **never return JPA entities directly from controllers** (even with `@JsonIgnore`, it's fragile and leaks your data model)
 
 **Spring depth:** How annotation processors interact with Spring's component scanning. MapStruct's `componentModel = "spring"` makes it a `@Component` — understand why that matters for DI.
 
