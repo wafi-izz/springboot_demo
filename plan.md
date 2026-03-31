@@ -50,11 +50,11 @@
 
 **Why:** Right now your queries are rigid — `findById`, `findAll`. Real applications need dynamic filtering: "find users where role=ADMIN and name contains 'john' and created after last week." JPA Specifications let you compose query predicates programmatically.
 
-- [ ] Make `UserRepository` extend `JpaSpecificationExecutor<User>`
-- [ ] Create `UserSpecifications` class with static methods returning `Specification<User>`
-- [ ] Build specs: `hasRole(Role)`, `nameLike(String)`, `emailLike(String)`, `createdAfter(LocalDateTime)`
-- [ ] Compose them: `hasRole(ADMIN).and(nameLike("john"))`
-- [ ] Add a `GET /api/users/filter?role=ADMIN&name=john` endpoint that accepts optional query params and builds specs dynamically
+- [x] Make `UserRepository` extend `JpaSpecificationExecutor<User>`
+- [x] Create `UserSpecifications` class with static methods returning `Specification<User>`
+- [x] Build specs: `hasRole(Role)`, `nameLike(String)`, `emailLike(String)`, `createdAfter(LocalDateTime)`
+- [x] Compose them: `hasRole(ADMIN).and(nameLike("john"))`
+- [x] Add a `GET /api/users/filter?role=ADMIN&name=john` endpoint that accepts optional query params and builds specs dynamically
 - [ ] Combine with `Pageable` for paginated filtered results
 
 **Spring depth:** The Criteria API underneath Specifications. Understand how `Specification<T>` wraps `Predicate` creation and how `JpaSpecificationExecutor` applies them to `CriteriaQuery`.

@@ -1,9 +1,7 @@
 package com.example.demo.controller;
 
-import com.example.demo.dto.user.BatchUpdateUser;
-import com.example.demo.dto.user.CreateUser;
-import com.example.demo.dto.user.UpdateUser;
-import com.example.demo.dto.user.UserResponse;
+import com.example.demo.dto.user.*;
+import com.example.demo.entity.Role;
 import com.example.demo.entity.User;
 import com.example.demo.mapper.UserMapper;
 import com.example.demo.service.UserService;
@@ -209,5 +207,24 @@ public class UserController {
     public ResponseEntity<Void> deleteAllUsers(){
         userService.delete();
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/users/filter")
+    public ResponseEntity<List<UserResponse>> filterUsers(
+            @RequestParam(required = false) Role role,
+            @RequestParam(required = false) String firstName,
+            @RequestParam(required = false) String lastName,
+            @RequestParam(required = false) String email,
+            @RequestParam(required = false) String username) {
+
+        UserFilterRequest filterRequest = new UserFilterRequest();
+        filterRequest.setRole(role);
+        filterRequest.setFirstName(firstName);
+        filterRequest.setLastName(lastName);
+        filterRequest.setEmail(email);
+        filterRequest.setUsername(username);
+
+        List<User> users = userService.filter(filterRequest);
+        return ResponseEntity.ok(userMapper.toResponseList(users));
     }
 }

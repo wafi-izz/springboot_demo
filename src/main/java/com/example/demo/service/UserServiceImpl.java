@@ -2,12 +2,15 @@ package com.example.demo.service;
 
 import com.example.demo.dto.user.BatchUpdateUser;
 import com.example.demo.dto.user.UpdateUser;
+import com.example.demo.dto.user.UserFilterRequest;
 import com.example.demo.entity.User;
 import com.example.demo.exception.ResourceNotFoundException;
 import com.example.demo.exception.ServiceException;
 import com.example.demo.mapper.UserMapper;
 import com.example.demo.repository.UserRepository;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import com.example.demo.specification.UserSpecifications;
 
 import java.util.List;
 
@@ -111,7 +114,7 @@ public class UserServiceImpl implements UserService {
     public List<User> patch(List<BatchUpdateUser> dtos) {
         try{
             List<User> updatedUsers = dtos.stream().map(dto -> {
-                User existing = userRepository.findById(dto.getId()).orElseThrow(() -> new ResourceNotFoundException("User with the id:" + dto/\.getId() + " was Not Found"));
+                User existing = userRepository.findById(dto.getId()).orElseThrow(() -> new ResourceNotFoundException("User with the id:" + dto.getId() + " was Not Found"));
                 userMapper.patchEntity(dto, existing);
                 return existing;
             }).toList();
@@ -125,18 +128,73 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public void delete(Long id) {
-        User user = userRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException("User with the id:" + id + " was Not Found"));
-        userRepository.delete(user);
+        try{
+            User user = userRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException("User with the id:" + id + " was Not Found"));
+            userRepository.delete(user);
+        }
+        catch (ResourceNotFoundException e) {
+            throw e;
+        }
+        catch (Exception e) {
+            throw new ServiceException("failed to delete user.", e);
+        }
     }
 
     @Override
     public void delete(List<Long> ids) {
-        List<User> user = userRepository.findAllById(ids);
-        userRepository.deleteAll(user);
+        try{
+            List<User> user = userRepository.findAllById(ids);
+            userRepository.deleteAll(user);
+        }
+        catch (ResourceNotFoundException e) {
+            throw e;
+        }
+        catch (Exception e) {
+            throw new ServiceException("failed to delete users.", e);
+        }
     }
 
     @Override
     public void delete() {
-        userRepository.deleteAll();
+        try{
+            userRepository.deleteAll();
+        }
+        catch (ResourceNotFoundException e) {
+            throw e;
+        }
+        catch (Exception e) {
+            throw new ServiceException("failed to delete users.", e);
+        }
+    }
+
+    @Override
+    public List<User> filter(UserFilterRequest filterRequest) {
+        try{
+            Specification<User> spec = Specification.where(null); // start with no filter (matches all)
+
+            if (filterRequest.getRole() != null) {
+                spec = spec.and(UserSpecifications.hasRole(filterRequest.getRole()));
+            }
+            if (filterRequest.getFirstName() != null) {
+                spec = spec.and(UserSpecifications.firstNameLike(filterRequest.getFirstName()));
+            }
+            if (filterRequest.getLastName() != null) {
+                spec = spec.and(UserSpecifications.lastNameLike(filterRequest.getLastName()));
+            }
+            if (filterRequest.getEmail() != null) {
+                spec = spec.and(UserSpecifications.emailLike(filterRequest.getEmail()));
+            }
+            if (filterRequest.getUsername() != null) {
+                spec = spec.and(UserSpecifications.usernameLike(filterRequest.getUsername()));
+            }
+
+            return userRepository.findAll(spec);
+        }
+        catch (ResourceNotFoundException e) {
+            throw e;
+        }
+        catch (Exception e) {
+            throw new ServiceException("failed to delete users.", e);
+        }
     }
 }

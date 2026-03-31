@@ -2,6 +2,7 @@ package com.example.demo.service;
 
 import com.example.demo.dto.user.BatchUpdateUser;
 import com.example.demo.dto.user.UpdateUser;
+import com.example.demo.dto.user.UserFilterRequest;
 import com.example.demo.entity.User;
 
 import java.util.List;
@@ -21,4 +22,5 @@ public interface UserService {
     void delete(Long id);
     void delete(List<Long> ids);
     void delete();
+    List<User> filter(UserFilterRequest filterRequest);
 }

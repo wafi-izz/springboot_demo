@@ -429,7 +429,274 @@ public interface UserMapper {
 8. Test every endpoint — make sure responses no longer contain `password`, `authorities`, etc.
 
 ### 1.3 JPA Specifications for Dynamic Queries
-<!-- content to be added -->
+
+#### What's Wrong With the Current Approach
+
+Right now your repository has methods like `findByEmail`, `findByUsername`. These are **static queries** — one method per query shape. What happens when someone wants:
+
+- Users where role = ADMIN
+- Users where role = ADMIN AND name contains "john"
+- Users where email like "%@company.com" AND created after last week
+- Any arbitrary combination of the above
+
+You'd need a `findByRoleAndFirstNameContainingAndEmailContainingAndCreatedAtAfter(...)` — and a separate method for every combination. This is the **combinatorial explosion problem**. With 4 filter fields, you'd need 2⁴ = 16 methods to cover all combos.
+
+**JPA Specifications** solve this by letting you compose query predicates at runtime. Each spec is a reusable building block.
+
+---
+
+#### How It Works Under the Hood
+
+**The Criteria API** is JPA's programmatic query-building API. Instead of writing JPQL strings, you build query trees:
+
+```java
+// This is what JPA Specifications abstract over:
+CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+CriteriaQuery<User> query = cb.createQuery(User.class);
+Root<User> root = query.from(User.class);
+
+// WHERE role = 'ADMIN' AND firstName LIKE '%john%'
+Predicate rolePred = cb.equal(root.get("role"), Role.ADMIN);
+Predicate namePred = cb.like(cb.lower(root.get("firstName")), "%john%");
+query.where(cb.and(rolePred, namePred));
+```
+
+This is verbose. **`Specification<T>`** is Spring Data's wrapper:
+
+```java
+@FunctionalInterface
+public interface Specification<T> {
+    Predicate toPredicate(Root<T> root, CriteriaQuery<?> query, CriteriaBuilder cb);
+}
+```
+
+It's a functional interface — takes the Criteria API pieces, returns a `Predicate`. The magic is that `Specification` has `.and()`, `.or()`, and `.not()` default methods, so you can compose them:
+
+```java
+Specification<User> spec = hasRole(Role.ADMIN).and(nameLike("john"));
+```
+
+**`JpaSpecificationExecutor<T>`** is the interface that gives your repository the ability to run specs:
+
+```java
+public interface JpaSpecificationExecutor<T> {
+    Optional<T> findOne(Specification<T> spec);
+    List<T> findAll(Specification<T> spec);
+    Page<T> findAll(Specification<T> spec, Pageable pageable);  // ← we'll use this in 1.4
+    List<T> findAll(Specification<T> spec, Sort sort);
+    long count(Specification<T> spec);
+    boolean exists(Specification<T> spec);
+}
+```
+
+When you call `repository.findAll(spec)`, Spring Data:
+1. Creates a `CriteriaQuery`
+2. Calls your `spec.toPredicate(root, query, cb)` to get the WHERE clause
+3. Executes the query via the EntityManager
+
+---
+
+#### The `Root<T>`, `CriteriaBuilder`, and `CriteriaQuery` Triangle
+
+These are the three objects you get in every Specification:
+
+- **`Root<T> root`** — represents the entity (`User`) in the FROM clause. You call `root.get("fieldName")` to reference columns. This returns a `Path<>` which is type-safe at the JPA metamodel level.
+
+- **`CriteriaBuilder cb`** — factory for predicates. `cb.equal()`, `cb.like()`, `cb.greaterThan()`, `cb.and()`, `cb.or()`, etc. Think of it as your SQL operator toolkit.
+
+- **`CriteriaQuery<?> query`** — the query being built. You rarely touch this in specs (it's more for subqueries or distinct). The `?` wildcard is there because the same spec can be used in count queries.
+
+---
+
+#### String Field Safety: `root.get("fieldName")`
+
+Using `root.get("role")` with a string is convenient but fragile — rename the field and it breaks at runtime with a cryptic Hibernate error. There are two ways to make this safer:
+
+1. **JPA Metamodel** (generated `User_` class) — `root.get(User_.role)`. Compile-time safety. Requires the `hibernate-jpamodelgen` annotation processor. We'll skip this for now but know it exists.
+
+2. **Constants** — define field names as `static final String` in your spec class. Not compile-safe but at least one place to fix.
+
+For this phase, string literals are fine. You'll feel the pain if you rename a field — that's the lesson.
+
+---
+
+#### Note on `createdAfter` Spec
+
+The plan mentions a `createdAfter(LocalDateTime)` specification. Your `User` entity doesn't have a `createdAt` field yet — that's coming in **Phase 1.5 (JPA Auditing)**. For now, we'll build the first three specs (`hasRole`, `nameLike`, `emailLike`) and wire up the endpoint. When you add auditing fields in 1.5, you'll come back and add `createdAfter` — which is a good exercise in extending specs.
+
+---
+
+#### Implementation Steps
+
+**Step 1: Extend UserRepository**
+
+Your repository needs to extend `JpaSpecificationExecutor<User>` in addition to `JpaRepository`:
+
+```java
+public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificationExecutor<User> {
+    // existing methods stay
+}
+```
+
+This adds `findAll(Specification<User>)`, `count(Specification<User>)`, etc.
+
+**Step 2: Create `UserSpecifications` class**
+
+Create `src/main/java/com/example/demo/specification/UserSpecifications.java`:
+
+```java
+package com.example.demo.specification;
+
+import com.example.demo.entity.Role;
+import com.example.demo.entity.User;
+import org.springframework.data.jpa.domain.Specification;
+
+public class UserSpecifications {
+
+    public static Specification<User> hasRole(Role role) {
+        return (root, query, cb) -> cb.equal(root.get("role"), role);
+    }
+
+    public static Specification<User> firstNameLike(String name) {
+        return (root, query, cb) -> cb.like(
+            cb.lower(root.get("firstName")),
+            "%" + name.toLowerCase() + "%"
+        );
+    }
+
+    public static Specification<User> emailLike(String email) {
+        return (root, query, cb) -> cb.like(
+            cb.lower(root.get("email")),
+            "%" + email.toLowerCase() + "%"
+        );
+    }
+}
+```
+
+Key points:
+- **Static methods** returning `Specification<User>` — these are your composable building blocks
+- **This is NOT a Spring `@Component`** — it's a utility class. Specifications are stateless functions, no need for DI.
+- **Case-insensitive** — `cb.lower()` + `.toLowerCase()` on the input
+- **Wildcard wrapping** — `%` on both sides for LIKE. The caller passes just the search term.
+
+**Step 3: Add filter method to UserService**
+
+Add to `UserService` interface:
+
+```java
+List<User> filter(Role role, String name, String email);
+```
+
+Implement in `UserServiceImpl`:
+
+```java
+import com.example.demo.specification.UserSpecifications;
+import org.springframework.data.jpa.domain.Specification;
+
+// In the filter method:
+public List<User> filter(Role role, String name, String email) {
+    Specification<User> spec = Specification.where(null); // start with no filter (matches all)
+
+    if (role != null) {
+        spec = spec.and(UserSpecifications.hasRole(role));
+    }
+    if (name != null && !name.isBlank()) {
+        spec = spec.and(UserSpecifications.firstNameLike(name));
+    }
+    if (email != null && !email.isBlank()) {
+        spec = spec.and(UserSpecifications.emailLike(email));
+    }
+
+    return userRepository.findAll(spec);
+}
+```
+
+The **`Specification.where(null)`** trick is important: a `null` spec means "no restriction" — `WHERE true`. This gives you a clean starting point to `.and()` onto conditionally. Without this, you'd need ugly null-checking on the first spec.
+
+**Step 4: Add filter endpoint to UserController**
+
+```java
+@GetMapping("/users/filter")
+@Operation(summary = "filter users", description = "filter users by optional criteria")
+@ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Success",
+        content = @Content(array = @ArraySchema(schema = @Schema(implementation = UserResponse.class)))),
+    @ApiResponse(responseCode = "503", description = "Service unavailable",
+        content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+})
+public ResponseEntity<List<UserResponse>> filterUsers(
+        @RequestParam(required = false) Role role,
+        @RequestParam(required = false) String name,
+        @RequestParam(required = false) String email) {
+    List<User> users = userService.filter(role, name, email);
+    return ResponseEntity.ok(userMapper.toResponseList(users));
+}
+```
+
+Key points:
+- **`@RequestParam(required = false)`** — all params are optional. No params = return all users.
+- **Spring auto-converts `Role`** — passing `?role=ADMIN` auto-converts the string to the `Role.ADMIN` enum. Spring's `StringToEnumConverterFactory` handles this. If someone passes `?role=INVALID`, Spring returns 400 automatically.
+- **Place this BEFORE `/users/{id}`** in your controller — otherwise Spring might try to interpret `filter` as an `{id}` path variable. Actually, since `/users/filter` is a different path pattern than `/users/{id}`, Spring resolves it correctly — literal segments take priority over path variables. But it's still good practice to order specific routes first.
+
+**Step 5: Test the endpoint**
+
+```
+GET /api/users/filter                          → all users
+GET /api/users/filter?role=ADMIN               → admins only
+GET /api/users/filter?name=john                → firstName contains "john"
+GET /api/users/filter?role=ADMIN&name=john     → admin + name match
+GET /api/users/filter?email=company.com        → email contains "company.com"
+GET /api/users/filter?role=INVALID             → 400 Bad Request (auto)
+```
+
+**Step 6: Compose in tests (understand the composition)**
+
+This is where specs shine. In your service or anywhere else, you can do:
+
+```java
+// OR composition
+Specification<User> adminsOrManagers = UserSpecifications.hasRole(Role.ADMIN)
+    .or(UserSpecifications.hasRole(Role.MANAGER));
+
+// Negate
+Specification<User> notAdmin = Specification.not(UserSpecifications.hasRole(Role.ADMIN));
+
+// Complex
+Specification<User> complex = UserSpecifications.hasRole(Role.ADMIN)
+    .and(UserSpecifications.firstNameLike("john").or(UserSpecifications.emailLike("john")));
+// WHERE role = 'ADMIN' AND (firstName LIKE '%john%' OR email LIKE '%john%')
+```
+
+---
+
+#### What SQL Gets Generated
+
+When you pass `hasRole(ADMIN).and(nameLike("john"))` to `findAll()`, Hibernate generates:
+
+```sql
+SELECT u.* FROM user_management.users u
+WHERE u.role = 'ADMIN' AND LOWER(u.first_name) LIKE '%john%'
+```
+
+Enable SQL logging to see this:
+```properties
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.format_sql=true
+```
+
+(Turn this off before production — it's noisy.)
+
+---
+
+#### Common Gotchas
+
+1. **`root.get("fieldName")` uses the Java field name, not the DB column name.** So `root.get("firstName")`, not `root.get("first_name")`. JPA translates through your `@Column` mapping.
+
+2. **`Specification.where(null)` vs `Specification.where(someSpec)`** — `where(null)` is valid and means "no restriction." This is intentional API design. But `.and(null)` on an existing spec throws NPE in some Spring Data versions — always guard with `if` checks.
+
+3. **N+1 queries with specs** — if your entity has lazy relationships, specs can trigger N+1 just like any other query. Not an issue for `User` right now, but know that `root.fetch("relationship")` exists for specs too.
+
+4. **Case sensitivity** — PostgreSQL's `LIKE` is case-sensitive by default. That's why we use `cb.lower()`. Alternatively, PostgreSQL has `ILIKE`, but the Criteria API doesn't have a direct equivalent — `cb.lower()` + `LIKE` is the portable approach.
 
 ### 1.4 Pagination & Sorting
 <!-- content to be added -->

@@ -57,9 +57,9 @@ public class User implements UserDetails {
         return List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
     }
 
-    public long getId() { return id; }
+    public Long getId() { return id; }
 
-    public void setId(long id) { this.id = id; }
+    public void setId(Long id) { this.id = id; }
 
     public String getFirstName() { return firstName; }
 
@@ -68,10 +68,6 @@ public class User implements UserDetails {
     public String getEmail() {return email; }
 
     public void setEmail(String email) { this.email = email; }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
 
     public String getLastName() {
         return lastName;
