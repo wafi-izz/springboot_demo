@@ -15,6 +15,9 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 
+import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -49,6 +52,17 @@ public class UserController {
     public ResponseEntity<List<UserResponse>> getUserList(){
         List<User> userList = userService.get();
         return ResponseEntity.ok(userMapper.toResponseList(userList));
+    }
+
+    @GetMapping("/users/paginated")
+    @Operation(summary = "get user list", description = "get user list description")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Success", content = @Content(array = @ArraySchema(schema = @Schema(implementation = UserResponse.class)))),
+            @ApiResponse(responseCode = "503", description = "Service unavailable", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+    })
+    public ResponseEntity<Page<UserResponse>> getUserListPaginated(@ParameterObject Pageable pageable){
+        Page<User> userList = userService.get(pageable);
+        return ResponseEntity.ok(userList.map(userMapper::toResponse));
     }
 
     @GetMapping("/users/count")
@@ -210,12 +224,12 @@ public class UserController {
     }
 
     @GetMapping("/users/filter")
-    public ResponseEntity<List<UserResponse>> filterUsers(
-            @RequestParam(required = false) Role role,
-            @RequestParam(required = false) String firstName,
-            @RequestParam(required = false) String lastName,
-            @RequestParam(required = false) String email,
-            @RequestParam(required = false) String username) {
+    @Operation(summary = "Filter users with pagination")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Filtered users retrieved successfully", content = @Content(schema = @Schema(implementation = Page.class))),
+            @ApiResponse(responseCode = "503", description = "Service unavailable", content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+    })
+    public ResponseEntity<Page<UserResponse>> filterUsers(@RequestParam(required = false) Role role, @RequestParam(required = false) String firstName, @RequestParam(required = false) String lastName, @RequestParam(required = false) String email, @RequestParam(required = false) String username,@ParameterObject Pageable pageable) {
 
         UserFilterRequest filterRequest = new UserFilterRequest();
         filterRequest.setRole(role);
@@ -224,7 +238,7 @@ public class UserController {
         filterRequest.setEmail(email);
         filterRequest.setUsername(username);
 
-        List<User> users = userService.filter(filterRequest);
-        return ResponseEntity.ok(userMapper.toResponseList(users));
+        Page<User> users = userService.filter(filterRequest, pageable);
+        return ResponseEntity.ok(users.map(userMapper::toResponse));
     }
 }

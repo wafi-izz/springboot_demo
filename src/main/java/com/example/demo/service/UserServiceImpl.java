@@ -12,6 +12,8 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import com.example.demo.specification.UserSpecifications;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import java.util.List;
 
 @Service
@@ -28,6 +30,11 @@ public class UserServiceImpl implements UserService {
     @Override
     public List<User> get() {
         return userRepository.findAll();
+    }
+
+    @Override
+    public Page<User> get(Pageable pageable) {
+        return userRepository.findAll(pageable);
     }
 
     @Override
@@ -168,7 +175,7 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public List<User> filter(UserFilterRequest filterRequest) {
+    public Page<User> filter(UserFilterRequest filterRequest, Pageable pageable) {
         try{
             Specification<User> spec = Specification.where(null); // start with no filter (matches all)
 
@@ -188,13 +195,13 @@ public class UserServiceImpl implements UserService {
                 spec = spec.and(UserSpecifications.usernameLike(filterRequest.getUsername()));
             }
 
-            return userRepository.findAll(spec);
+            return userRepository.findAll(spec, pageable);
         }
         catch (ResourceNotFoundException e) {
             throw e;
         }
         catch (Exception e) {
-            throw new ServiceException("failed to delete users.", e);
+            throw new ServiceException("failed to get users.", e);
         }
     }
 }

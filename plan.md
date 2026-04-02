@@ -55,7 +55,7 @@
 - [x] Build specs: `hasRole(Role)`, `nameLike(String)`, `emailLike(String)`, `createdAfter(LocalDateTime)`
 - [x] Compose them: `hasRole(ADMIN).and(nameLike("john"))`
 - [x] Add a `GET /api/users/filter?role=ADMIN&name=john` endpoint that accepts optional query params and builds specs dynamically
-- [ ] Combine with `Pageable` for paginated filtered results
+- [x] Combine with `Pageable` for paginated filtered results
 
 **Spring depth:** The Criteria API underneath Specifications. Understand how `Specification<T>` wraps `Predicate` creation and how `JpaSpecificationExecutor` applies them to `CriteriaQuery`.
 
@@ -65,11 +65,11 @@
 
 **Why:** `findAll()` returning every row is a production incident waiting to happen. Pagination is expected in any real API.
 
-- [ ] Add `Pageable` parameter to service and controller methods
-- [ ] Return `Page<UserResponse>` instead of `List<User>`
-- [ ] Support `?page=0&size=20&sort=lastName,asc` via Spring's automatic `Pageable` resolution
-- [ ] Configure default page size in `application.properties` (`spring.data.web.pageable.default-page-size`)
-- [ ] Understand `Page` vs `Slice` — when to use each and the performance implications (count query vs no count query)
+- [x] Add `Pageable` parameter to service and controller methods
+- [x] Return `Page<UserResponse>` instead of `List<User>`
+- [x] Support `?page=0&size=20&sort=lastName,asc` via Spring's automatic `Pageable` resolution
+- [x] Configure default page size in `application.properties` (`spring.data.web.pageable.default-page-size`)
+- [x] Understand `Page` vs `Slice` — when to use each and the performance implications (count query vs no count query)
 
 **Spring depth:** How `PageableHandlerMethodArgumentResolver` auto-resolves `Pageable` from request params. Read the source.
 
@@ -79,12 +79,12 @@
 
 **Why:** Knowing who created/modified a record and when is non-negotiable in any real system. Spring Data JPA has built-in support via `@CreatedDate`, `@LastModifiedDate`, `@CreatedBy`, `@LastModifiedBy`.
 
-- [ ] Add `spring-boot-starter-data-jpa`'s auditing: `@EnableJpaAuditing`
-- [ ] Create a `BaseEntity` with `createdAt`, `updatedAt`, `createdBy`, `updatedBy`
-- [ ] Have `User` extend `BaseEntity`
-- [ ] Write a Flyway migration to add those columns
-- [ ] Implement `AuditorAware<String>` bean that pulls the current username from `SecurityContextHolder`
-- [ ] Verify auditing works on create and update operations
+- [x] Add `spring-boot-starter-data-jpa`'s auditing: `@EnableJpaAuditing`
+- [x] Create a `BaseEntity` with `createdAt`, `updatedAt`, `createdBy`, `updatedBy`
+- [x] Have `User` extend `BaseEntity`
+- [x] Write a Flyway migration to add those columns
+- [x] Implement `AuditorAware<String>` bean that pulls the current username from `SecurityContextHolder`
+- [x] Verify auditing works on create and update operations
 
 **Spring depth:** How `@EntityListeners(AuditingEntityListener.class)` hooks into JPA lifecycle events. Understand `@PrePersist` and `@PreUpdate` under the hood.
 

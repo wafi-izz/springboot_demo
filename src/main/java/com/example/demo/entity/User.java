@@ -14,7 +14,7 @@ import com.example.demo.entity.Role;
 
 @Entity
 @Table(name = "users", schema = "user_management")
-public class User implements UserDetails {
+public class User extends BaseEntity implements UserDetails {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

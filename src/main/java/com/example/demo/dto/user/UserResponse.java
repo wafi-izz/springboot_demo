@@ -2,6 +2,8 @@ package com.example.demo.dto.user;
 
 import com.example.demo.entity.Role;
 
+import java.time.LocalDateTime;
+
 public class UserResponse {
     private Long id;
     private String firstName;
@@ -9,6 +11,11 @@ public class UserResponse {
     private String username;
     private String email;
     private Role role;
+
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+    private String createdBy;
+    private String updatedBy;
 
     public Long getId() {
         return id;
@@ -56,5 +63,38 @@ public class UserResponse {
 
     public void setRole(Role role) {
         this.role = role;
+    }
+
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+
+    public String getCreatedBy() {
+        return createdBy;
+    }
+
+    public void setCreatedBy(String createdBy) {
+        this.createdBy = createdBy;
+    }
+
+    public String getUpdatedBy() {
+        return updatedBy;
+    }
+
+    public void setUpdatedBy(String updatedBy) {
+        this.updatedBy = updatedBy;
     }
 }

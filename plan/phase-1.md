@@ -702,10 +702,890 @@ spring.jpa.properties.hibernate.format_sql=true
 <!-- content to be added -->
 
 ### 1.5 JPA Auditing
-<!-- content to be added -->
+
+#### What's Wrong Right Now
+
+Your `User` entity has no record of when it was created, when it was last modified, or who did it. In production, this is a blind spot:
+
+- Support gets a ticket: "my account was changed" — you can't tell when or by whom
+- You need to debug a data issue — no timestamps to correlate with logs
+- Compliance/audit requirements demand a trail of who modified what
+
+You could manually set `createdAt = LocalDateTime.now()` in every create method, but that's:
+1. Repetitive across every entity you'll ever create
+2. Easy to forget
+3. Spread across service methods instead of centralized
+
+#### How Spring Data JPA Auditing Works
+
+Spring Data JPA provides **automatic auditing** via JPA lifecycle callbacks. Here's the full mechanism:
+
+**1. `@EntityListeners(AuditingEntityListener.class)`**
+
+This tells JPA: "Before persisting or updating this entity, call `AuditingEntityListener`'s callback methods."
+
+Under the hood, JPA defines lifecycle callback annotations:
+- `@PrePersist` — called before `INSERT`
+- `@PreUpdate` — called before `UPDATE`
+- `@PostPersist`, `@PostUpdate`, `@PostLoad`, `@PreRemove`, `@PostRemove` — others
+
+`AuditingEntityListener` is Spring's implementation that hooks into `@PrePersist` and `@PreUpdate`. When triggered, it:
+1. Looks for fields annotated with `@CreatedDate`, `@LastModifiedDate`, `@CreatedBy`, `@LastModifiedBy`
+2. For date fields: calls `LocalDateTime.now()` (or the configured `DateTimeProvider`)
+3. For "by" fields: calls your `AuditorAware` bean to get the current user
+4. Sets the values on the entity
+
+**2. `@EnableJpaAuditing`**
+
+This annotation on a `@Configuration` class registers the Spring infrastructure that `AuditingEntityListener` depends on:
+- Registers an `AuditingHandler` bean
+- Looks for an `AuditorAware` bean (for `@CreatedBy`/`@LastModifiedBy`)
+- Optionally accepts a `DateTimeProvider` bean (defaults to system clock)
+
+Without `@EnableJpaAuditing`, the annotations on your fields are inert — the listener has nothing to delegate to.
+
+**3. `AuditorAware<T>`**
+
+A functional interface you implement:
+
+```java
+@FunctionalInterface
+public interface AuditorAware<T> {
+    Optional<T> getCurrentAuditor();
+}
+```
+
+This is where you answer: "Who is the current user?" In your case, you pull it from Spring Security's `SecurityContextHolder`. The type parameter `T` matches the type of your `createdBy`/`updatedBy` fields — typically `String` (username) or `Long` (user ID).
+
+#### The `@MappedSuperclass` Pattern
+
+You want audit fields on every entity, not just `User`. The standard approach is a `BaseEntity` (or `AuditableEntity`) superclass:
+
+```java
+@MappedSuperclass
+@EntityListeners(AuditingEntityListener.class)
+public abstract class BaseEntity {
+
+    @CreatedDate
+    @Column(nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @LastModifiedDate
+    @Column(nullable = false)
+    private LocalDateTime updatedAt;
+
+    @CreatedBy
+    @Column(updatable = false)
+    private String createdBy;
+
+    @LastModifiedBy
+    private String updatedBy;
+
+    // getters and setters
+}
+```
+
+Key annotations:
+- **`@MappedSuperclass`** — tells JPA: "This class isn't an entity itself, but its fields should be inherited by entity subclasses." The columns end up in the child entity's table, not a separate table.
+- **`updatable = false`** on `createdAt` and `createdBy` — these should only be set on INSERT, never changed. This is a database-level guard on top of the `@CreatedDate`/`@CreatedBy` semantics.
+- **`@LastModifiedDate`** updates on every save, including the first one (creation). So `createdAt` and `updatedAt` will be the same on a brand-new entity.
+
+#### `@MappedSuperclass` vs `@Inheritance`
+
+Don't confuse `@MappedSuperclass` with JPA inheritance strategies (`@Inheritance(strategy = JOINED)`, etc.):
+
+| | `@MappedSuperclass` | `@Inheritance` |
+|---|---|---|
+| Creates a table? | No — fields go into child tables | Yes (or shared via strategies) |
+| Polymorphic queries? | No — can't do `findAll()` on the superclass | Yes |
+| Use case | Shared fields (audit, soft-delete) | Actual type hierarchies (e.g., `Payment` → `CreditCardPayment`, `BankTransfer`) |
+
+You want `@MappedSuperclass` here. You're sharing columns, not modeling a type hierarchy.
+
+#### Implementation Steps
+
+**Step 1: Create the Flyway migration**
+
+Create `V3__add_audit_columns.sql`:
+
+```sql
+ALTER TABLE user_management.users
+    ADD COLUMN created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    ADD COLUMN updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    ADD COLUMN created_by  VARCHAR(255),
+    ADD COLUMN updated_by  VARCHAR(255);
+```
+
+**Why `DEFAULT NOW()`:** Your existing rows have no values for these columns. Without a default, the `NOT NULL` constraint fails on existing data. `DEFAULT NOW()` gives existing rows a reasonable initial value. New rows will get their values from Spring's auditing — the default is just a safety net for the migration.
+
+After the migration runs, you could remove the default in a future migration if you want to enforce that the application always provides the value. But it's harmless to leave.
+
+**Step 2: Create `BaseEntity`**
+
+Create `src/main/java/com/example/demo/entity/BaseEntity.java`:
+
+```java
+package com.example.demo.entity;
+
+import jakarta.persistence.*;
+import org.springframework.data.annotation.CreatedBy;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedBy;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+import java.time.LocalDateTime;
+
+@MappedSuperclass
+@EntityListeners(AuditingEntityListener.class)
+public abstract class BaseEntity {
+
+    @CreatedDate
+    @Column(nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @LastModifiedDate
+    @Column(nullable = false)
+    private LocalDateTime updatedAt;
+
+    @CreatedBy
+    @Column(updatable = false)
+    private String createdBy;
+
+    @LastModifiedBy
+    private String updatedBy;
+
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public String getCreatedBy() { return createdBy; }
+    public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
+
+    public String getUpdatedBy() { return updatedBy; }
+    public void setUpdatedBy(String updatedBy) { this.updatedBy = updatedBy; }
+}
+```
+
+**Step 3: Make `User` extend `BaseEntity`**
+
+```java
+public class User extends BaseEntity implements UserDetails {
+    // everything else stays the same — the audit fields are inherited
+}
+```
+
+That's it. The four audit columns are now part of `User`'s table mapping via `@MappedSuperclass`.
+
+**Step 4: Implement `AuditorAware`**
+
+Create `src/main/java/com/example/demo/config/AuditorAwareImpl.java`:
+
+```java
+package com.example.demo.config;
+
+import org.springframework.data.domain.AuditorAware;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+
+import java.util.Optional;
+
+@Component
+public class AuditorAwareImpl implements AuditorAware<String> {
+
+    @Override
+    public Optional<String> getCurrentAuditor() {
+        return Optional.ofNullable(SecurityContextHolder.getContext().getAuthentication())
+                .filter(Authentication::isAuthenticated)
+                .map(Authentication::getName);
+    }
+}
+```
+
+How this works:
+1. Gets the `Authentication` from Spring Security's thread-local `SecurityContextHolder`
+2. Checks if it's actually authenticated (not an anonymous token)
+3. Returns the username via `getName()`
+
+If there's no authentication (e.g., during startup data loading or a scheduled job), it returns `Optional.empty()` — the `createdBy`/`updatedBy` fields will be `null`. That's correct behavior.
+
+**Step 5: Enable JPA Auditing**
+
+Add `@EnableJpaAuditing` to your main application class or a dedicated config class:
+
+```java
+@SpringBootApplication
+@EnableJpaAuditing
+public class DemoApplication {
+    // ...
+}
+```
+
+Or create a separate config:
+
+```java
+@Configuration
+@EnableJpaAuditing
+public class JpaConfig {
+}
+```
+
+Either works. A separate config class is cleaner if you end up with many JPA-related configurations.
+
+**Step 6: Update `UserResponse` DTO**
+
+Add the audit fields to your response so clients can see them:
+
+```java
+public class UserResponse {
+    // existing fields...
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+    private String createdBy;
+    private String updatedBy;
+    // getters/setters
+}
+```
+
+MapStruct will auto-map these because the field names match `BaseEntity`'s fields. No mapper changes needed.
+
+**Step 7: Update `UserMapper`**
+
+You need to tell MapStruct to ignore the audit fields during `toEntity`, `updateEntity`, and `patchEntity` — these are managed by Spring, not by the client:
+
+```java
+@Mapping(target = "createdAt", ignore = true)
+@Mapping(target = "updatedAt", ignore = true)
+@Mapping(target = "createdBy", ignore = true)
+@Mapping(target = "updatedBy", ignore = true)
+```
+
+Add these to `toEntity`, `updateEntity`, and `patchEntity` methods. Without this, MapStruct will try to map these fields from DTOs (which don't have them) and give compile warnings.
+
+#### How `@PrePersist` / `@PreUpdate` Work Under the Hood
+
+When Hibernate is about to flush an entity to the database:
+
+1. It checks the entity's metadata for `@EntityListeners`
+2. It finds `AuditingEntityListener.class`
+3. For a new entity → calls `@PrePersist` callback:
+   - `AuditingEntityListener.touchForCreate(entity)`
+   - Sets `createdDate`, `lastModifiedDate`, `createdBy`, `lastModifiedBy`
+4. For a dirty (modified) entity → calls `@PreUpdate` callback:
+   - `AuditingEntityListener.touchForUpdate(entity)`
+   - Sets `lastModifiedDate`, `lastModifiedBy` only
+5. Then the SQL `INSERT`/`UPDATE` executes
+
+This happens inside the same transaction, before the SQL statement — the audit values are part of the same `INSERT`/`UPDATE`.
+
+#### Gotchas
+
+1. **`@CreatedDate` is also set on `@PreUpdate` if null** — if you somehow have an entity without a `createdAt` (e.g., loaded from legacy data), Spring won't retroactively set it on update. It stays null.
+
+2. **Bulk operations bypass listeners** — `@Modifying @Query("UPDATE User u SET u.role = :role")` goes directly to the database. JPA lifecycle callbacks (including auditing) are NOT triggered. Only operations that go through the EntityManager (`save()`, `persist()`, `merge()`) trigger them.
+
+3. **`createdBy` will be null for unauthenticated operations** — if you have endpoints that create entities without authentication (e.g., user registration), `AuditorAware` returns empty and `createdBy` is null. That's fine — you can use "system" as a fallback:
+   ```java
+   return Optional.ofNullable(SecurityContextHolder.getContext().getAuthentication())
+           .filter(Authentication::isAuthenticated)
+           .map(Authentication::getName)
+           .or(() -> Optional.of("system"));
+   ```
+
+4. **The `createdAfter` spec from 1.3** — now that you have `createdAt`, you can add the `createdAfter(LocalDateTime)` specification to `UserSpecifications`:
+   ```java
+   public static Specification<User> createdAfter(LocalDateTime dateTime) {
+       return (root, query, cb) -> cb.greaterThan(root.get("createdAt"), dateTime);
+   }
+   ```
+
+#### Checklist
+
+1. Write Flyway migration `V3__add_audit_columns.sql`
+2. Create `BaseEntity` with the four audit fields + annotations
+3. Make `User` extend `BaseEntity`
+4. Create `AuditorAwareImpl` implementing `AuditorAware<String>`
+5. Add `@EnableJpaAuditing` to config
+6. Update `UserResponse` DTO with audit fields
+7. Update `UserMapper` to ignore audit fields on write operations
+8. Start the app — verify migration runs and Hibernate validates successfully
+9. Create a user via API — verify `createdAt`, `updatedAt` are populated
+10. Update a user — verify `updatedAt` changes, `createdAt` stays the same
+11. (Optional) Add `createdAfter` spec to `UserSpecifications`
 
 ### 1.6 Custom AOP — Build Your Own Annotations
-<!-- content to be added -->
+
+#### What Is AOP and Why Should You Care
+
+AOP (Aspect-Oriented Programming) lets you add behavior to existing code **without modifying it**. You've already been using AOP without knowing it:
+
+- `@Transactional` — wraps your method in a transaction (begin → commit/rollback)
+- `@Secured` / `@PreAuthorize` — checks authorization before the method runs
+- `@Cacheable` — checks a cache before executing, stores result after
+- `@Async` — runs the method in a different thread
+
+All of these work the same way: Spring creates a **proxy** around your bean. When someone calls your method, they're actually calling the proxy, which runs extra logic before/after delegating to the real method.
+
+#### How Spring Proxies Work Under the Hood
+
+When Spring creates a bean that has AOP advice applied, it doesn't give you the actual object. It gives you a **proxy** — a wrapper that intercepts method calls.
+
+**Two proxy strategies:**
+
+1. **JDK Dynamic Proxy** — used when your bean implements an interface. Creates a proxy that implements the same interface. The proxy intercepts calls and delegates to the real object.
+
+2. **CGLIB Proxy** — used when your bean is a concrete class (no interface). Creates a **subclass** of your bean at runtime via bytecode generation. The subclass overrides methods to add the interceptor logic.
+
+Spring Boot defaults to CGLIB (`spring.aop.proxy-target-class=true`). This is why:
+- **Private methods can't be intercepted** — CGLIB creates a subclass, and subclasses can't override private methods
+- **Self-invocation bypasses the proxy** — if `methodA()` calls `this.methodB()`, the call to `methodB` goes directly to the real object, skipping the proxy entirely. `this` is the real object, not the proxy.
+
+```
+Client → Proxy.methodA() → [AOP advice runs] → RealObject.methodA()
+                                                       ↓
+                                                  this.methodB()  ← NO proxy, AOP skipped!
+```
+
+This is the #1 gotcha with Spring AOP. `@Transactional` on `methodB` does nothing if called from `methodA` in the same class.
+
+#### AOP Terminology (The Ones That Matter)
+
+- **Aspect** — a class containing advice. Annotated with `@Aspect` and `@Component`.
+- **Advice** — the code that runs. Types:
+  - `@Before` — runs before the method
+  - `@After` — runs after the method (regardless of outcome)
+  - `@AfterReturning` — runs after successful return
+  - `@AfterThrowing` — runs after an exception
+  - `@Around` — wraps the method entirely. You control when/if the method executes. Most powerful.
+- **JoinPoint** — the method being intercepted. Gives you access to method name, arguments, target object.
+- **ProceedingJoinPoint** — extends JoinPoint, used in `@Around`. You call `proceed()` to execute the actual method.
+- **Pointcut** — the expression that defines *which* methods to intercept. Can match by annotation, package, method name, etc.
+
+#### Dependency
+
+You need `spring-boot-starter-aop`. Check your `pom.xml` — if you already have `spring-boot-starter-web`, AOP is likely transitively included. If not:
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-aop</artifactId>
+</dependency>
+```
+
+---
+
+## Part 1: `@LogExecutionTime`
+
+This is the simplest custom AOP annotation — logs how long a method takes to execute.
+
+### Step 1: Create the annotation
+
+Create `src/main/java/com/example/demo/annotation/LogExecutionTime.java`:
+
+```java
+package com.example.demo.annotation;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+public @interface LogExecutionTime {
+}
+```
+
+Understanding the meta-annotations:
+- **`@Target(ElementType.METHOD)`** — this annotation can only go on methods. Other options: `TYPE` (class), `FIELD`, `PARAMETER`, etc.
+- **`@Retention(RetentionPolicy.RUNTIME)`** — the annotation is available at runtime via reflection. This is **required** for AOP — Spring needs to see the annotation at runtime to apply advice. `RetentionPolicy.SOURCE` (like `@Override`) is erased at compile time. `CLASS` is in the bytecode but not accessible via reflection.
+
+### Step 2: Create the Aspect
+
+Create `src/main/java/com/example/demo/aspect/LogExecutionTimeAspect.java`:
+
+```java
+package com.example.demo.aspect;
+
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.Around;
+import org.aspectj.lang.annotation.Aspect;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+@Aspect
+@Component
+public class LogExecutionTimeAspect {
+
+    private static final Logger log = LoggerFactory.getLogger(LogExecutionTimeAspect.class);
+
+    @Around("@annotation(com.example.demo.annotation.LogExecutionTime)")
+    public Object logExecutionTime(ProceedingJoinPoint joinPoint) throws Throwable {
+        String methodName = joinPoint.getSignature().toShortString();
+        Object[] args = joinPoint.getArgs();
+
+        log.info("→ {} called with args: {}", methodName, args);
+
+        long start = System.currentTimeMillis();
+        try {
+            Object result = joinPoint.proceed();
+            long duration = System.currentTimeMillis() - start;
+            log.info("← {} returned in {}ms", methodName, duration);
+            return result;
+        } catch (Throwable ex) {
+            long duration = System.currentTimeMillis() - start;
+            log.error("✗ {} failed in {}ms with: {}", methodName, duration, ex.getMessage());
+            throw ex;
+        }
+    }
+}
+```
+
+Breaking this down:
+
+- **`@Aspect`** — marks this as an AOP aspect. AspectJ annotation, not Spring's.
+- **`@Component`** — makes it a Spring bean. Without this, Spring doesn't see it.
+- **`@Around("@annotation(com.example.demo.annotation.LogExecutionTime)")`** — the pointcut expression. Means: "intercept any method annotated with `@LogExecutionTime`". The `@annotation()` pointcut designator matches methods carrying a specific annotation.
+- **`ProceedingJoinPoint`** — gives you control. You MUST call `proceed()` to execute the real method. If you forget, the method never runs.
+- **`return result`** — you MUST return the result. If the method returns `ResponseEntity<User>`, your aspect needs to pass that through. Forgetting this silently returns `null`.
+- **`throws Throwable`** — `proceed()` can throw anything. You must either catch+rethrow or declare it.
+
+### Step 3: Apply it
+
+Put `@LogExecutionTime` on any service method:
+
+```java
+@LogExecutionTime
+public User get(Long id) {
+    return userRepository.findById(id)
+        .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+}
+```
+
+### Step 4: Test it
+
+Call `GET /api/users/1`. Check your console logs — you should see:
+
+```
+→ UserServiceImpl.get(..) called with args: [1]
+← UserServiceImpl.get(..) returned in 23ms
+```
+
+### Pointcut Expression Alternatives
+
+The `@annotation()` pointcut is just one option:
+
+```java
+// All methods in service package
+@Around("execution(* com.example.demo.service.*.*(..))")
+
+// All public methods in classes annotated with @Service
+@Around("within(@org.springframework.stereotype.Service *)")
+
+// Specific method signature
+@Around("execution(* com.example.demo.service.UserService.get(Long))")
+
+// Combine with && || !
+@Around("@annotation(LogExecutionTime) && execution(public * *(..))")
+```
+
+For your custom annotations, `@annotation()` is the right choice — it's explicit, opt-in per method.
+
+---
+
+## Part 2: `@Auditable`
+
+This is more complex — captures the state change and writes it to a database table.
+
+### Step 1: Create the Flyway migration
+
+Create `V4__create_audit_log_table.sql`:
+
+```sql
+CREATE TABLE user_management.audit_log (
+    id          BIGSERIAL PRIMARY KEY,
+    action      VARCHAR(20)  NOT NULL,
+    entity_type VARCHAR(100) NOT NULL,
+    entity_id   VARCHAR(100),
+    performed_by VARCHAR(255),
+    performed_at TIMESTAMP    NOT NULL DEFAULT NOW(),
+    details     TEXT
+);
+```
+
+`details` stores a JSON string of what changed. `TEXT` is fine — we're not querying inside it.
+
+### Step 2: Create the `AuditLog` entity
+
+Create `src/main/java/com/example/demo/entity/AuditLog.java`:
+
+```java
+package com.example.demo.entity;
+
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "audit_log", schema = "user_management")
+public class AuditLog {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String action;
+
+    @Column(nullable = false)
+    private String entityType;
+
+    private String entityId;
+
+    private String performedBy;
+
+    @Column(nullable = false)
+    private LocalDateTime performedAt;
+
+    private String details;
+
+    // getters and setters
+}
+```
+
+### Step 3: Create the repository
+
+Create `src/main/java/com/example/demo/repository/AuditLogRepository.java`:
+
+```java
+package com.example.demo.repository;
+
+import com.example.demo.entity.AuditLog;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
+}
+```
+
+### Step 4: Create the annotation
+
+Create `src/main/java/com/example/demo/annotation/Auditable.java`:
+
+```java
+package com.example.demo.annotation;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+public @interface Auditable {
+    String action();       // "CREATE", "UPDATE", "DELETE"
+    String entity();       // "User"
+}
+```
+
+Annotation elements look like methods but act like fields. When you use it: `@Auditable(action = "CREATE", entity = "User")`.
+
+### Step 5: Create the Aspect
+
+Create `src/main/java/com/example/demo/aspect/AuditAspect.java`:
+
+```java
+package com.example.demo.aspect;
+
+import com.example.demo.annotation.Auditable;
+import com.example.demo.entity.AuditLog;
+import com.example.demo.repository.AuditLogRepository;
+import org.aspectj.lang.JoinPoint;
+import org.aspectj.lang.annotation.AfterReturning;
+import org.aspectj.lang.annotation.Aspect;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+
+import java.time.LocalDateTime;
+import java.util.Optional;
+
+@Aspect
+@Component
+public class AuditAspect {
+
+    private final AuditLogRepository auditLogRepository;
+
+    public AuditAspect(AuditLogRepository auditLogRepository) {
+        this.auditLogRepository = auditLogRepository;
+    }
+
+    @AfterReturning(pointcut = "@annotation(auditable)", returning = "result")
+    public void audit(JoinPoint joinPoint, Auditable auditable, Object result) {
+        String entityId = extractEntityId(result);
+        String performedBy = getCurrentUser();
+
+        AuditLog log = new AuditLog();
+        log.setAction(auditable.action());
+        log.setEntityType(auditable.entity());
+        log.setEntityId(entityId);
+        log.setPerformedBy(performedBy);
+        log.setPerformedAt(LocalDateTime.now());
+        log.setDetails("Method: " + joinPoint.getSignature().toShortString());
+
+        auditLogRepository.save(log);
+    }
+
+    private String extractEntityId(Object result) {
+        if (result == null) return null;
+        try {
+            var method = result.getClass().getMethod("getId");
+            Object id = method.invoke(result);
+            return id != null ? id.toString() : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String getCurrentUser() {
+        return Optional.ofNullable(SecurityContextHolder.getContext().getAuthentication())
+                .filter(Authentication::isAuthenticated)
+                .map(Authentication::getName)
+                .orElse("anonymous");
+    }
+}
+```
+
+Key differences from `@LogExecutionTime`:
+
+- **`@AfterReturning`** instead of `@Around` — we only want to audit *successful* operations. If the method throws, no audit entry.
+- **`returning = "result"`** — binds the method's return value to the `result` parameter. This gives us the created/updated entity to extract the ID.
+- **`@annotation(auditable)`** with lowercase — this binds the annotation instance to the `auditable` parameter. This is how you access `auditable.action()` and `auditable.entity()`. The parameter name must match.
+- **`extractEntityId`** uses reflection to call `getId()` on the result. This is pragmatic — it works for any entity with a `getId()` method. In a more sophisticated system you'd use an interface.
+
+### Step 6: Apply it
+
+On your service methods:
+
+```java
+@Auditable(action = "CREATE", entity = "User")
+public User create(User user) {
+    // ...
+}
+
+@Auditable(action = "UPDATE", entity = "User")
+public User update(Long id, UpdateUser dto) {
+    // ...
+}
+
+@Auditable(action = "DELETE", entity = "User")
+public void delete(Long id) {
+    // ...
+}
+```
+
+### Step 7: Test it
+
+1. Create a user via API
+2. Check the `audit_log` table in pgAdmin — you should see a row with action=CREATE, entity_type=User, entity_id=(the new user's ID), performed_by=(your JWT username)
+
+---
+
+## Part 3: `@RateLimit`
+
+In-memory rate limiting per client. Simple but effective.
+
+### Step 1: Create the annotation
+
+Create `src/main/java/com/example/demo/annotation/RateLimit.java`:
+
+```java
+package com.example.demo.annotation;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+public @interface RateLimit {
+    int maxRequests() default 10;
+    int windowSeconds() default 60;
+}
+```
+
+`default` values mean you can use `@RateLimit` without parameters and get 10 requests per 60 seconds. Or override: `@RateLimit(maxRequests = 5, windowSeconds = 30)`.
+
+### Step 2: Create the exception
+
+Create `src/main/java/com/example/demo/exception/RateLimitExceededException.java`:
+
+```java
+package com.example.demo.exception;
+
+public class RateLimitExceededException extends RuntimeException {
+    public RateLimitExceededException(String message) {
+        super(message);
+    }
+}
+```
+
+### Step 3: Handle it in your `GlobalExceptionHandler`
+
+Add a handler that returns 429:
+
+```java
+@ExceptionHandler(RateLimitExceededException.class)
+public ResponseEntity<ProblemDetail> handleRateLimit(RateLimitExceededException ex) {
+    ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+        HttpStatus.TOO_MANY_REQUESTS, ex.getMessage()
+    );
+    return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(problem);
+}
+```
+
+### Step 4: Create the Aspect
+
+Create `src/main/java/com/example/demo/aspect/RateLimitAspect.java`:
+
+```java
+package com.example.demo.aspect;
+
+import com.example.demo.annotation.RateLimit;
+import com.example.demo.exception.RateLimitExceededException;
+import jakarta.servlet.http.HttpServletRequest;
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.Around;
+import org.aspectj.lang.annotation.Aspect;
+import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import java.util.Map;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+
+@Aspect
+@Component
+public class RateLimitAspect {
+
+    private final Map<String, Queue<Long>> requestLog = new ConcurrentHashMap<>();
+
+    @Around("@annotation(rateLimit)")
+    public Object rateLimit(ProceedingJoinPoint joinPoint, RateLimit rateLimit) throws Throwable {
+        String clientKey = getClientKey(joinPoint);
+        long now = System.currentTimeMillis();
+        long windowStart = now - (rateLimit.windowSeconds() * 1000L);
+
+        Queue<Long> timestamps = requestLog.computeIfAbsent(clientKey, k -> new ConcurrentLinkedQueue<>());
+
+        // Remove expired timestamps
+        while (!timestamps.isEmpty() && timestamps.peek() < windowStart) {
+            timestamps.poll();
+        }
+
+        if (timestamps.size() >= rateLimit.maxRequests()) {
+            throw new RateLimitExceededException(
+                "Rate limit exceeded. Max " + rateLimit.maxRequests() +
+                " requests per " + rateLimit.windowSeconds() + " seconds."
+            );
+        }
+
+        timestamps.add(now);
+        return joinPoint.proceed();
+    }
+
+    private String getClientKey(ProceedingJoinPoint joinPoint) {
+        String methodName = joinPoint.getSignature().toShortString();
+        String clientIp = "unknown";
+
+        try {
+            ServletRequestAttributes attrs =
+                (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs != null) {
+                HttpServletRequest request = attrs.getRequest();
+                clientIp = request.getRemoteAddr();
+            }
+        } catch (Exception ignored) {}
+
+        return clientIp + ":" + methodName;
+    }
+}
+```
+
+How it works:
+- **Sliding window** — stores the timestamp of each request in a queue per client+method
+- **`ConcurrentHashMap` + `ConcurrentLinkedQueue`** — thread-safe without synchronization
+- **Client key** = IP + method name. Each endpoint has its own rate limit counter per client.
+- **On each request**: purge expired timestamps, check count against limit, add current timestamp
+- **Limitation**: in-memory only — resets on restart, doesn't work across multiple app instances. Redis-based rate limiting (Phase 3) solves both.
+
+### Step 5: Apply it
+
+On your login endpoint (or any controller method):
+
+```java
+@RateLimit(maxRequests = 5, windowSeconds = 60)
+@PostMapping("/auth/login")
+public ResponseEntity<?> login(@RequestBody LoginRequest request) {
+    // ...
+}
+```
+
+You can also put it on service methods, but controller-level makes more sense for rate limiting since you need the HTTP request for the client IP.
+
+### Step 6: Test it
+
+1. Call the login endpoint 5 times rapidly
+2. The 6th call should return `429 Too Many Requests` with the ProblemDetail body
+3. Wait 60 seconds, try again — it should work
+
+---
+
+## Understanding the Proxy Limitation
+
+After implementing all three, test this to internalize the proxy limitation:
+
+**Self-invocation test:** In `UserServiceImpl`, if you have:
+
+```java
+@LogExecutionTime
+public List<User> get() {
+    return userRepository.findAll();
+}
+
+public User get(Long id) {
+    get();  // ← this calls get() directly on `this`, NOT on the proxy
+    return userRepository.findById(id).orElseThrow(...);
+}
+```
+
+Calling `get(Long id)` from the controller → the `@LogExecutionTime` on `get()` **will NOT trigger**. The call to `get()` inside `get(Long id)` bypasses the proxy because it uses `this`.
+
+This is the same reason a `@Transactional` method calling another `@Transactional` method in the same class doesn't start a new transaction.
+
+---
+
+## Checklist
+
+1. Add `spring-boot-starter-aop` if not already present
+2. Create `@LogExecutionTime` annotation
+3. Create `LogExecutionTimeAspect`
+4. Apply to service methods and test
+5. Create `V4__create_audit_log_table.sql` migration
+6. Create `AuditLog` entity + `AuditLogRepository`
+7. Create `@Auditable` annotation
+8. Create `AuditAspect`
+9. Apply to create/update/delete service methods and test
+10. Create `@RateLimit` annotation
+11. Create `RateLimitExceededException` + handler
+12. Create `RateLimitAspect`
+13. Apply to login endpoint and test
+14. Test the self-invocation limitation to understand it
 
 ### 1.7 Bean Validation Deep-Dive
 <!-- content to be added -->
